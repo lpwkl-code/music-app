@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <title>音樂大調教學系統 - 詳細報表版</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <style>
+        :root { --primary: #3498db; --success: #2ecc71; --error: #e74c3c; --warning: #f1c40f; --skip: #9b59b6; --dark: #2c3e50; }
+        body { font-family: 'PingFang TC', sans-serif; background: #f0f4f8; display: flex; flex-direction: column; align-items: center; padding: 20px; }
+        .container { background: white; padding: 25px; border-radius: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); width: 95%; max-width: 1200px; text-align: center; }
+        
+        .student-info { display: flex; justify-content: center; gap: 15px; margin-bottom: 20px; background: #e8f4fd; padding: 15px; border-radius: 12px; }
+        .student-info input { padding: 8px; border: 1px solid #ccc; border-radius: 4px; width: 140px; font-size: 16px; }
+
+        .status-bar { display: flex; justify-content: space-around; align-items: center; margin-bottom: 20px; background: var(--dark); color: white; padding: 15px; border-radius: 12px; }
+        .info-panel { margin: 15px 0; padding: 20px; background: #fffbe6; border: 2px solid #ffe58f; border-radius: 12px; font-size: 1.5rem; font-weight: bold; min-height: 40px; }
+        
+        .piano-wrapper { overflow-x: auto; padding: 40px 10px; background: #333; border-radius: 15px; margin-top: 10px; }
+        .piano { display: flex; position: relative; justify-content: center; }
+        
+        .key { border: 1px solid #000; transition: all 0.1s; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 12px; font-weight: bold; user-select: none; cursor: pointer; }
+        .white { width: 48px; height: 180px; background: white; z-index: 1; border-radius: 0 0 6px 6px; color: #888; font-size: 14px; }
+        .black { width: 32px; height: 110px; background: #222; z-index: 2; margin-left: -16px; margin-right: -16px; border-radius: 0 0 4px 4px; color: #fff; font-size: 9px; line-height: 1.2; padding-bottom: 8px; }
+
+        .correct { background: var(--success) !important; color: white !important; }
+        .wrong { background: var(--error) !important; color: white !important; }
+        .show-answer { background: var(--warning) !important; color: #333 !important; }
+        .hint-white { background: #d1ecf1 !important; border-bottom: 6px solid var(--primary); }
+        .hint-black { background: var(--primary) !important; }
+
+        .controls { margin-bottom: 20px; display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+        button { padding: 12px 20px; font-size: 16px; border-radius: 8px; cursor: pointer; border: none; color: white; font-weight: bold; transition: 0.2s; }
+        .btn-play { background: var(--primary); }
+        .btn-start { background: var(--success); }
+        .btn-skip { background: var(--skip); }
+        .btn-excel { background: #27ae60; }
+        button:hover { opacity: 0.9; transform: scale(1.02); }
+        select { padding: 10px; border-radius: 8px; font-size: 16px; }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>🎹 音樂大調教學系統 (詳細報表版)</h1>
+        
+        <div class="student-info">
+            <input type="text" id="stuName" placeholder="姓名">
+            <input type="text" id="stuClass" placeholder="班別">
+            <input type="text" id="stuNo" placeholder="學號">
+            <button class="btn-excel" onclick="exportToExcel()">導出成績明細 Excel 📊</button>
+        </div>
+
+        <div class="status-bar">
+            <div>進度：<span id="currentQuestion">--</span> / 10</div>
+            <div>得分：<span id="score">0</span></div>
+        </div>
+
+        <div class="controls">
+            <div id="learningBtns">
+                <select id="scaleSelect" onchange="initScale()">
+                    <option value="C">C Major</option>
+                    <option value="G">G Major</option><option value="D">D Major</option><option value="A">A Major</option><option value="E">E Major</option>
+                    <option value="F">F Major</option><option value="Bb">Bb Major</option><option value="Eb">Eb Major</option><option value="Ab">Ab Major</option><option value="Db">Db Major</option>
+                </select>
+                <button class="btn-play" onclick="playScale()">播放範例 🎵</button>
+                <button class="btn-start" onclick="startChallenge()">開始 10 題挑戰! 🚀</button>
+            </div>
+            
+            <div id="challengeBtns" style="display:none;">
+                <button class="btn-play" onclick="playHintInChallenge()">聽一次範例 🔊</button>
+                <button class="btn-skip" onclick="showAnswerAndNext()">看答案跳過 💡</button>
+            </div>
+        </div>
+
+        <div id="infoPanel" class="info-panel">請輸入資料後開始練習。</div>
+        <div class="piano-wrapper"><div id="piano" class="piano"></div></div>
+    </div>
+
+    <script>
+        const synth = new Tone.Synth().toDestination();
+        let score = 0, isChallenge = false, questionCount = 0, currentStep = 0;
+        let currentTargetScale = "";
+        let shuffledScales = [];
+        let challengeResults = []; // 新增：用於記錄每一題的詳情
+
+        const scales = {
+            'C':['C4','D4','E4','F4','G4','A4','B4','C5'], 'G':['G3','A3','B3','C4','D4','E4','F#4','G4'],
+            'D':['D4','E4','F#4','G4','A4','B4','C#5','D5'], 'A':['A3','B3','C#4','D4','E4','F#4','G#4','A4'],
+            'E':['E3','F#3','G#3','A3','B3','C#4','D#4','E4'], 'F':['F3','G3','A3','Bb3','C4','D4','E4','F4'],
+            'Bb':['Bb3','C4','D4','Eb4','F4','G4','A4','Bb4'], 'Eb':['Eb3','F3','G3','Ab3','Bb3','C4','D4','Eb4'],
+            'Ab':['Ab3','Bb3','C4','Db4','Eb4','F4','G4','Ab4'], 'Db':['Db4','Eb4','F4','Gb4','Ab4','Bb4','C5','Db5']
+        };
+
+        const notesOrder = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+        const pianoLayout = [];
+        for(let i=5; i<12; i++) pianoLayout.push({n: notesOrder[i]+'3', t: notesOrder[i].includes('#')?'black':'white', l: notesOrder[i]});
+        for(let oct=4; oct<=4; oct++) notesOrder.forEach(n => pianoLayout.push({n: n+oct, t: n.includes('#')?'black':'white', l: n}));
+        pianoLayout.push({n:'C5', t:'white', l:'C'}, {n:'C#5', t:'black', l:'C#<br>Db'}, {n:'D5', t:'white', l:'D'});
+
+        function createPiano() {
+            const piano = document.getElementById('piano');
+            pianoLayout.forEach(key => {
+                const div = document.createElement('div');
+                div.className = `key ${key.t}`;
+                div.dataset.note = key.n;
+                let label = key.l;
+                if(key.t === 'black') {
+                    const sharps = {'C#':'C#<br>Db','D#':'D#<br>Eb','F#':'F#<br>Gb','G#':'G#<br>Ab','A#':'A#<br>Bb'};
+                    label = sharps[key.l] || key.l;
+                }
+                div.innerHTML = `<span>${label}</span>`;
+                div.onmousedown = () => handlePress(div, key.n);
+                piano.appendChild(div);
+            });
+        }
+
+        function isSameNote(played, target) {
+            const map = {'Bb3':'A#3','Eb4':'D#4','Ab4':'G#4','Db4':'C#4','Bb4':'A#4','Eb3':'D#3','Ab3':'G#3','Gb4':'F#4','Cb4':'B3'};
+            return played === target || map[played] === target || played === map[target];
+        }
+
+        function handlePress(el, note) {
+            Tone.start();
+            synth.triggerAttackRelease(note, "8n");
+            if (!isChallenge) return;
+
+            const target = scales[currentTargetScale][currentStep];
+            if (isSameNote(note, target)) {
+                el.classList.add('correct');
+                score += 10;
+                document.getElementById('score').innerText = score;
+                currentStep++;
+                if (currentStep >= 8) {
+                    challengeResults.push({題號: questionCount, 大調: currentTargetScale, 結果: "答對", 得分: 80});
+                    setTimeout(nextQuestion, 500);
+                }
+            } else {
+                el.classList.add('wrong');
+                setTimeout(() => el.classList.remove('wrong'), 300);
+            }
+        }
+
+        function startChallenge() {
+            if(!document.getElementById('stuName').value) return alert("請先輸入姓名");
+            isChallenge = true; score = 0; questionCount = 0; challengeResults = [];
+            document.getElementById('learningBtns').style.display = 'none';
+            document.getElementById('challengeBtns').style.display = 'flex';
+            shuffledScales = Object.keys(scales).sort(() => Math.random() - 0.5);
+            nextQuestion();
+        }
+
+        function nextQuestion() {
+            if (questionCount >= 10) {
+                document.getElementById('infoPanel').innerHTML = `🏁 挑戰結束！總分：${score}。請導出 Excel。`;
+                isChallenge = false;
+                document.getElementById('learningBtns').style.display = 'flex';
+                document.getElementById('challengeBtns').style.display = 'none';
+                return;
+            }
+            currentTargetScale = shuffledScales[questionCount];
+            questionCount++; currentStep = 0;
+            document.getElementById('currentQuestion').innerText = questionCount;
+            document.getElementById('infoPanel').innerText = `第 ${questionCount} 題：${currentTargetScale} Major`;
+            document.querySelectorAll('.key').forEach(k => k.classList.remove('hint-white', 'hint-black', 'correct', 'show-answer'));
+        }
+
+        function showAnswerAndNext() {
+            challengeResults.push({題號: questionCount, 大調: currentTargetScale, 結果: "跳過", 得分: 0});
+            const targetNotes = scales[currentTargetScale];
+            document.querySelectorAll('.key').forEach(k => {
+                if (targetNotes.some(t => isSameNote(k.dataset.note, t))) k.classList.add('show-answer');
+            });
+            setTimeout(() => { nextQuestion(); }, 2000);
+        }
+
+        function playHintInChallenge() {
+            playScale(currentTargetScale);
+            document.querySelectorAll('.key').forEach(k => {
+                if (scales[currentTargetScale].some(t => isSameNote(k.dataset.note, t))) k.classList.add('show-answer');
+            });
+            setTimeout(() => { document.querySelectorAll('.key').forEach(k => k.classList.remove('show-answer')); }, 2500);
+        }
+
+        function exportToExcel() {
+            const name = document.getElementById('stuName').value || "未命名";
+            // 建立表頭資訊
+            const studentInfo = [
+                { 姓名: name, 班別: document.getElementById('stuClass').value, 學號: document.getElementById('stuNo').value, 總得分: score, 測試時間: new Date().toLocaleString() },
+                {} // 空行
+            ];
+            // 合併學生資訊與題項明細
+            const finalData = studentInfo.concat(challengeResults);
+            
+            const worksheet = XLSX.utils.json_to_sheet(finalData);
+            const workbook = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(workbook, worksheet, "詳細成績報表");
+            XLSX.writeFile(workbook, `成績單_${name}.xlsx`);
+        }
+
+        function initScale() {
+            if(isChallenge) return;
+            const targetNotes = scales[document.getElementById('scaleSelect').value];
+            document.querySelectorAll('.key').forEach(k => {
+                k.classList.remove('hint-white', 'hint-black', 'correct', 'show-answer');
+                if (targetNotes.some(t => isSameNote(k.dataset.note, t))) {
+                    k.classList.add(k.classList.contains('white') ? 'hint-white' : 'hint-black');
+                }
+            });
+        }
+
+        async function playScale(target) {
+            await Tone.start();
+            const sc = target || document.getElementById('scaleSelect').value;
+            scales[sc].forEach((n, i) => synth.triggerAttackRelease(n, "8n", Tone.now() + i * 0.4));
+        }
+
+        createPiano();
+        initScale();
+    </script>
+</body>
+</html>
